@@ -1,4 +1,4 @@
-[![CI](https://github.com/cgshep/entropy-collapse-mobile-sensors/actions/workflows/python-package.yml/badge.svg)](https://github.com/cgshep/entropy-collapse-mobile-sensors/actions/workflows/python-package.yml)
+[![Python package](https://github.com/cgshep/entropy-collapse-mobile-sensors/actions/workflows/python-package.yml/badge.svg)](https://github.com/cgshep/entropy-collapse-mobile-sensors/actions/workflows/python-package.yml)
 
 # Entropy Analyser
 
