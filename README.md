@@ -5,7 +5,7 @@
 This repository is designed to accompany the paper ["Entropy Collapse in Mobile Sensors: The Hidden
 Risks of Sensor-Based Security"](https://arxiv.org/pdf/2502.09535).
 
-The work presents entropy values from a range of mobile sensors, such as accelerometers, gyroscopes, magnetometers, and envioronmental sensors.
+The work presents entropy values from a range of mobile sensors, such as accelerometers, gyroscopes, magnetometers, and environmental sensors.
 
 The results show that sensor data has insufficient unpredictability for any serious security application, resulting in 3.4-4.5 bits for single sensor modalities, and at most ~24 bits when using multiple sensors simultaneously.
 
