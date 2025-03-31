@@ -32,18 +32,6 @@ BINS=512
 ADAPTIVE_BINNING_MAX_BINS = 3072
 
 
-def load_uci_har_signal(file_path,
-                        root_dir, 
-                        include_subject_ids=False, 
-                        usecols=None, 
-                        colnames=None):
-    return pd.read_table(f"{root_dir}/{file_path}", 
-                         sep=r"\s+", 
-                         header=None, 
-                         usecols=usecols, 
-                         names=colnames,
-                         dtype=np.float32)
-
     
 def plot_and_save_graph(data, x_label, file_name, graph_dir, i=0, save=False, show=False):
     colors=["blue", "red", "green", "black"]
