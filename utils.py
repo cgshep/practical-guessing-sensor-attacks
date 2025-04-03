@@ -17,7 +17,6 @@ from multiprocessing import Pool
 from tqdm import tqdm
 from p_tqdm import p_map
 from functools import lru_cache
-from pyitlib import discrete_random_variable as drv
 from prettytable import PrettyTable
 from pgmpy.estimators import TreeSearch
 from pgmpy.models import BayesianNetwork

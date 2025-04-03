@@ -4,13 +4,19 @@ import gc
 import logging
 import matplotlib.pyplot as plt
 
-from utils import *
-from pyfiglet import Figlet
+#from utils import *
+#from pyfiglet import Figlet
 from tqdm import tqdm
 from prettytable import PrettyTable
 from IPython.display import display, Markdown
 from rich.console import Console
 from rich.text import Text
+
+import concurrent.futures
+import pandas as pd
+import numpy as np
+import scipy as sp
+import sys
 
 DATASET_PATH="./data"
 GRAPH_OUTPUT="./output"
@@ -124,9 +130,22 @@ def marginal_guesswork(series, alpha=0.95):
 def massey_bound(series):
     return 0.25 * ((2**shannon_entropy(series))-1)
 
+def min_entropy(series):    
+    # Calculate the frequency of each unique value.
+    counts = series.value_counts()
+    
+    # Convert counts to probabilities.
+    probabilities = counts / counts.sum()
+    
+    # Get the maximum probability
+    max_prob = probabilities.max()
+    # Compute and return the min-entropy using base 2 logarithm
+    return -np.log2(max_prob)
+
 
 def display_entropies(series):
     display(f"H(X)    = {shannon_entropy(series)}")
+    display(f"H∞(X)    = {min_entropy(series)}")
     display(f"E[G(X)] ≥ {massey_bound(series)}")
     display(f"E[G(X)] = {expected_guessing_entropy(series)}")
 
@@ -147,30 +166,6 @@ def simulate_average_guesses(series, n=1000):
     # Compute the average number of guesses (adding 1 because ranks are 0-indexed).
     avg_guesses = np.mean(sampled_indices + 1)
     return sampled_indices, avg_guesses
-
-
-def min_entropy(series):    
-    # Calculate the frequency of each unique value.
-    counts = series.value_counts()
-    
-    # Convert counts to probabilities.
-    probabilities = counts / counts.sum()
-    
-    # Get the maximum probability
-    max_prob = probabilities.max()
-    # Compute and return the min-entropy using base 2 logarithm
-    return -np.log2(max_prob)
-    
-
-def sliding_window_joint_guesswork_target(reference_guess_order, target_df, sensor_cols, window_size, step=1, default_rank=None):
-    results = []
-    if default_rank is None:
-        default_rank = max(reference_guess_order.values()) + 1
-
-    # Slide the window over the target DataFrame.
-    for start in range(0, len(target_df) - window_size + 1, step):
-        window = target_df.iloc[start:start + window_size]
-        #guess
 
 
 
@@ -196,18 +191,153 @@ def display_entropy_results(df):
     results_df = pd.DataFrame(results)
     display(results_df.round(3))
 
+def get_sensor_paths(location):
+    pass
 
-def single_sensor_analysis():
+
+def get_guess(sensor, value, ref_guess_orders, default_rank_dict):
+    """
+    Helper to look up the guess rank for a single sensor value.
+    """
+    return ref_guess_orders[sensor].get(value, default_rank_dict[sensor])
+
+def compute_window(window_start, target_df, sensor_cols, ref_guess_orders, default_rank_dict, window_size, num_measurements):
+    """
+    Compute the total guess count for a single window of target_df.
+    
+    Parameters:
+      - window_start: starting index for the window.
+      - target_df: the target DataFrame.
+      - sensor_cols: list of sensor columns to consider.
+      - ref_guess_orders: dictionary mapping each sensor column to its reference guess order.
+      - default_rank_dict: dictionary mapping each sensor to a default rank (if the value is unseen).
+      - window_size: number of rows in each window.
+      - num_measurements: total number of sensor measurements in the window.
+    
+    Returns a dictionary with:
+      - 'window_start': the window's starting index.
+      - 'total_guesses': the sum of guess ranks over all sensor measurements in the window.
+      - 'avg_guess': the average guess rank per measurement.
+    """
+    window = target_df.iloc[window_start: window_start + window_size]
+    total_guesses = 0
+    # For each sensor, compute the sum of guess ranks in this window.
+    for sensor in sensor_cols:
+        sensor_values = window[sensor]
+        # Use a lambda that calls our helper (this lambda is defined here but get_guess is top-level)
+        sensor_guesses = sensor_values.apply(lambda x: get_guess(sensor, x, ref_guess_orders, default_rank_dict))
+        print(f"sensor: {sensor}, guesses: {sensor_guesses.sum()}")
+        total_guesses += sensor_guesses.sum()
+    avg_guess_sensor = total_guesses / len(sensor_cols)
+    avg_guess_row = total_guesses / num_measurements
+    return {
+        'window_start': window_start,
+        'total_guesses': total_guesses,
+        'avg_guess_per_sensor': int(avg_guess_sensor),
+        'avg_guess_per_row': int(avg_guess_row),
+        'approx_entropy': np.log2(total_guesses)
+    }
+
+
+def sliding_window_total_guesses_parallel(target_df, sensor_cols, ref_guess_orders, window_size, step=1, default_rank_dict=None):
+    """
+    Slide a window over target_df and, for each window, guess every sensor measurement independently
+    using the reference guess orders. The function computes the total number of guesses required in each window.
+    
+    Parameters:
+      - target_df: the target timeseries DataFrame.
+      - sensor_cols: list of sensor column names.
+      - ref_guess_orders: dictionary mapping each sensor column to its guess order.
+      - window_size: number of rows per window.
+      - step: step size for the sliding window.
+      - default_rank_dict: optional dict mapping sensor to default rank. If None, defaults to max(rank)+1 per sensor.
+    
+    Returns:
+      A DataFrame where each row corresponds to a window with:
+         - window_start: starting index of the window.
+         - total_guesses: sum of guess ranks over all sensor measurements in that window.
+         - avg_guess: average guess rank per measurement.
+    """
+    results = []
+    # If not provided, set default rank per sensor as one more than the maximum rank in the reference.
+    if default_rank_dict is None:
+        default_rank_dict = {sensor: max(ref_guess_orders[sensor].values()) + 1 for sensor in sensor_cols}
+
+    num_measurements = window_size * len(sensor_cols)
+    window_indices = list(range(0, len(target_df) - window_size + 1, step))
+
+    # Parallelize over window indices.
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = [
+            executor.submit(
+                compute_window, 
+                start, 
+                target_df, 
+                sensor_cols, 
+                ref_guess_orders, 
+                default_rank_dict, 
+                window_size, 
+                num_measurements
+            )
+            for start in window_indices
+        ]
+        for future in tqdm(concurrent.futures.as_completed(futures), 
+                           total=len(futures), 
+                           desc="Processing windows"):
+            results.append(future.result())
+
+       
+    # Sort results by window_start (as as_completed may not preserve order).
+    results.sort(key=lambda x: x['window_start'])
+    return pd.DataFrame(results).round(3)
+
+# -------------------------
+# Example Usage:
+# -------------------------
+# Assume you have:
+# - ref_df: reference DataFrame used to derive per-sensor guess orders.
+# - target_df: target timeseries DataFrame (first column is timestamp, rest are sensor readings).
+#
+# And a list of sensor columns (for example, skipping the timestamp column).
+ # or specify explicitly
+
+# Assume ref_guess_orders was computed as follows:
+def compute_reference_guess_orders(ref_df, sensor_cols):
+    """
+    For each sensor column in ref_df, compute a mapping from sensor value to guess rank.
+    """
+    ref_guess_orders = {}
+    for col in sensor_cols:
+        counts = ref_df[col].value_counts()
+        sorted_values = counts.index.tolist()  # sorted by descending frequency
+        guess_order = {val: rank + 1 for rank, val in enumerate(sorted_values)}
+        ref_guess_orders[col] = guess_order
+    return ref_guess_orders
+
+
+def single_sensor_analysis(window_size):
     data_dirs = ["garden"] # "auto", "home", "office"
     path = "data/garden/GardenPixel-2025-03-23_17-03-12-8132b4b89fb54aa7a9762a4a82d6863d.csv"
-    print(f"> Entropy values for {path}")
-
+    display(f"> Entropy values for {path}")
     df = load_data_file(path)
+
+    # Fetch sensor columns, skipping the timestamp
+    sensor_cols = df.columns[1:]
+    display(f"Guessing {len(sensor_cols)} sensors: {sensor_cols}")
+    display(f"Location: {data_dirs[0]}")
+    ref_guess_orders = compute_reference_guess_orders(df, sensor_cols)
+    if window_size > 0:
+        display(f"> Using window size: {window_size}")
+        results_df = sliding_window_total_guesses_parallel(df, sensor_cols, ref_guess_orders, window_size)
+    else:
+        display("> Using full dataset (no window)")
+        results_df = sliding_window_total_guesses_parallel(df, sensor_cols, ref_guess_orders, df.shape[0])
+    display(results_df)
     
     # Correlation matrix
     #plot_correlation_matrix(df.drop("seconds_elapsed", axis=1), prefix=data_dirs[0], save=True)
 
-    display_entropy_results(df)
+    #display_entropy_results(df)
 
     
     """
@@ -225,4 +355,8 @@ def single_sensor_analysis():
 if __name__ == "__main__":
     print_nice_heading("Practical Guessing Attacks by Carlton Shepherd (2025, https://cs.gl)")
     print_nice_subheading("Single Sensor Analysis")
-    single_sensor_analysis()
+    if len(sys.argv) == 2:
+        window_size = int(sys.argv[1])
+    else:
+        window_size = 0
+    single_sensor_analysis(window_size)
