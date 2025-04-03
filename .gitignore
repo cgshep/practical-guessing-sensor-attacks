@@ -7,6 +7,7 @@ __pycache__/
 *.so
 
 .virtual_documents/
+data/
 
 # Distribution / packaging
 .Python
